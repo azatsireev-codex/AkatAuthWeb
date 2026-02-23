@@ -1,0 +1,8 @@
+{
+  "id": "web-auth-plugin",
+  "name": "AkatAuthWeb",
+  "version": "0.0.1-SNAPSHOT",
+  "authors": ["2FORWORD2"],
+  "description": "A simple plugin for Velocity with Web support",
+  "main": "net.akat.auth.WebAuthPlugin"
+}
