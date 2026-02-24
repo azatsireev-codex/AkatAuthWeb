@@ -109,6 +109,7 @@ public class WebAuthPlugin {
 
             httpServer.post("/internal/players/account/verify", apiHandler);
             httpServer.post("/internal/connection-requests/approve", apiHandler);
+            httpServer.post("/internal/players/ip/check", apiHandler);
 
             logger.info("✅ HTTP сервер запущен на порту {}", config.getApiPort());
 

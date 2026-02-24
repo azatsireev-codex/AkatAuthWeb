@@ -48,18 +48,9 @@ public class RegistrationService {
     }
 
     public RegistrationResponse processRegistration(RegistrationRequest request) {
-        for (RegistrationValidator validator : validators) {
-            RegistrationValidator.ValidationResult result = validator.validate(request, playerRepository);
-            if (!result.isValid()) {
-                if (result.getConflict() != null) {
-                    return RegistrationResponse.errorWithConflict(
-                            result.getErrorCode(),
-                            result.getErrorMessage(),
-                            result.getConflict()
-                    );
-                }
-                return RegistrationResponse.error(result.getErrorCode(), result.getErrorMessage());
-            }
+        RegistrationResponse validationResult = validateRegistration(request);
+        if (validationResult != null) {
+            return validationResult;
         }
 
         // Создаём ожидающую регистрацию
@@ -75,6 +66,24 @@ public class RegistrationService {
 
         logger.info("Регистрация ожидает подтверждения: {} (5 мин)", request.getNickname());
         return RegistrationResponse.successPending();
+    }
+
+    public RegistrationResponse validateRegistration(RegistrationRequest request) {
+        for (RegistrationValidator validator : validators) {
+            RegistrationValidator.ValidationResult result = validator.validate(request, playerRepository);
+            if (!result.isValid()) {
+                if (result.getConflict() != null) {
+                    return RegistrationResponse.errorWithConflict(
+                            result.getErrorCode(),
+                            result.getErrorMessage(),
+                            result.getConflict()
+                    );
+                }
+                return RegistrationResponse.error(result.getErrorCode(), result.getErrorMessage());
+            }
+        }
+
+        return null;
     }
 
     public boolean completeRegistration(String nickname, String ipAddress) {
