@@ -1,145 +1,50 @@
 package net.akat.auth.api.handler;
 
-import com.fasterxml.jackson.jr.ob.JSON;
-
 import io.javalin.http.Context;
 import io.javalin.http.Handler;
-import net.akat.auth.config.PluginConfig;
-import net.akat.auth.dto.RegistrationRequest;
-import net.akat.auth.dto.RegistrationResponse;
-import net.akat.auth.service.RegistrationService;
+import net.akat.auth.integration.python.PythonAuthServiceClient;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 
-import java.util.HashMap;
-import java.util.Map;
-
 public class ApiRequestHandler implements Handler {
-    private final RegistrationService registrationService;
-    private final PluginConfig config;
+    private final PythonAuthServiceClient pythonClient;
     private final Logger logger;
 
-    public ApiRequestHandler(RegistrationService registrationService,
-                             PluginConfig config, // ← ДОБАВЬТЕ
-                             Logger logger) {
-        this.registrationService = registrationService;
-        this.config = config;
+    public ApiRequestHandler(PythonAuthServiceClient pythonClient, Logger logger) {
+        this.pythonClient = pythonClient;
         this.logger = logger;
     }
 
     @Override
-    public void handle(@NotNull Context ctx) throws Exception {
+    public void handle(@NotNull Context ctx) {
         String path = ctx.path();
 
-        if (!checkAuthorization(ctx)) {
-            return;
-        }
-
-        switch (path) {
-            case "/internal/players/account/verify":
-                handleRegistration(ctx);
-                break;
-            case "/internal/connection-requests/approve":
-                handleConnectionApprove(ctx);
-                break;
-            default:
-                sendErrorResponse(ctx, 404, "NOT_FOUND", "Endpoint not found");
-        }
-    }
-
-    private boolean checkAuthorization(Context ctx) {
-        String authHeader = ctx.header("Authorization");
-
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            sendErrorResponse(ctx, 401, "UNAUTHORIZED", "Требуется авторизация");
-            return false;
-        }
-
-        String token = authHeader.substring(7);
-        if (!token.equals(config.getApiKey())) {
-            sendErrorResponse(ctx, 403, "FORBIDDEN", "Неверный API ключ");
-            return false;
-        }
-        return true;
-    }
-
-    private void handleRegistration(Context ctx) {
         try {
-            RegistrationRequest request = JSON.std.beanFrom(
-                    RegistrationRequest.class, ctx.body()
-            );
-
-            RegistrationResponse response = registrationService.processRegistration(request);
-
-            if (response.getStatus().equals("error")) {
-                sendErrorResponse(ctx, 409, response.getError(), response.getMessage());
-            } else {
-                sendSuccessResponse(ctx, response, response.getMessage());
+            PythonAuthServiceClient.ProxyResponse response;
+            switch (path) {
+                case "/internal/players/account/verify":
+                    response = pythonClient.postWithPluginAuth(path, ctx.body());
+                    break;
+                case "/internal/connection-requests/approve":
+                    response = pythonClient.postWithPluginAuth(path, ctx.body());
+                    break;
+                case "/internal/players/ip/check":
+                    response = pythonClient.postWithPluginAuth(path, ctx.body());
+                    break;
+                default:
+                    ctx.status(404).result("{\"success\":false,\"error\":\"NOT_FOUND\",\"message\":\"Endpoint not found\"}");
+                    return;
             }
 
-        } catch (Exception e) {
-            logger.error("Ошибка обработки регистрации", e);
-            sendErrorResponse(ctx, 500, "INTERNAL_ERROR", "Сервис временно недоступен");
-        }
-    }
-
-    private void handleConnectionApprove(Context ctx) {
-        try {
-            Map<String, Object> request = JSON.std.mapFrom(ctx.body());
-            String nickname = (String) request.get("nickname");
-            String ipAddress = (String) request.get("ipAddress");
-
-            if (nickname == null || nickname.trim().isEmpty() ||
-                    ipAddress == null || ipAddress.trim().isEmpty()) {
-                sendErrorResponse(ctx, 400, "BAD_REQUEST", "Поля 'nickname' и 'ipAddress' обязательны");
-                return;
-            }
-
-            boolean success = registrationService.confirmNewIp(nickname, ipAddress);
-            if (success) {
-                Map<String, Object> responseData = new HashMap<>();
-                responseData.put("nickname", nickname);
-                responseData.put("ipAddress", ipAddress);
-                responseData.put("confirmedAt", System.currentTimeMillis());
-
-                sendSuccessResponse(ctx, responseData, "IP успешно подтверждён");
-            } else {
-                sendErrorResponse(ctx, 404, "CONFIRMATION_EXPIRED", "Время подтверждения запроса истекло");
-            }
-
-        } catch (Exception e) {
-            sendErrorResponse(ctx, 500, "INTERNAL_ERROR", "Сервис временно недоступен");
-        }
-    }
-
-    private void sendErrorResponse(Context ctx, int status, String errorCode, String message) {
-        try {
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", false);
-            response.put("error", errorCode);
-            response.put("message", message);
-
-            ctx.status(status)
+            ctx.status(response.statusCode)
                     .contentType("application/json")
-                    .result(JSON.std.asString(response));
-        } catch (Exception e) {
-            logger.error("Ошибка отправки ответа", e);
-            ctx.status(status).result("{\"error\":\"" + errorCode + "\"}");
-        }
-    }
+                    .result(response.body);
 
-    private void sendSuccessResponse(Context ctx, Object data, String message) {
-        try {
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("data", data);
-            response.put("message", message);
-
-            ctx.contentType("application/json")
-                    .result(JSON.std.asString(response));
         } catch (Exception e) {
-            logger.error("Ошибка отправки успешного ответа", e);
-            ctx.status(500).result("{\"error\":\"RESPONSE_ERROR\"}");
+            logger.error("Ошибка proxy обработки API", e);
+            ctx.status(500)
+                    .contentType("application/json")
+                    .result("{\"success\":false,\"error\":\"INTERNAL_ERROR\",\"message\":\"Сервис временно недоступен\"}");
         }
     }
 }
