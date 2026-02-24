@@ -42,6 +42,9 @@ public class ApiRequestHandler implements Handler {
             case "/internal/connection-requests/approve":
                 handleConnectionApprove(ctx);
                 break;
+            case "/internal/players/ip/check":
+                handleRegistrationPrecheck(ctx);
+                break;
             default:
                 sendErrorResponse(ctx, 404, "NOT_FOUND", "Endpoint not found");
         }
@@ -79,6 +82,37 @@ public class ApiRequestHandler implements Handler {
 
         } catch (Exception e) {
             logger.error("Ошибка обработки регистрации", e);
+            sendErrorResponse(ctx, 500, "INTERNAL_ERROR", "Сервис временно недоступен");
+        }
+    }
+
+    private void handleRegistrationPrecheck(Context ctx) {
+        try {
+            RegistrationRequest request = JSON.std.beanFrom(
+                    RegistrationRequest.class, ctx.body()
+            );
+
+            RegistrationResponse validationResult = registrationService.validateRegistration(request);
+
+            Map<String, Object> responseData = new HashMap<>();
+            responseData.put("nickname", request.getNickname());
+            responseData.put("email", request.getEmail());
+            responseData.put("ipAddress", request.getIpAddress());
+
+            if (validationResult != null) {
+                responseData.put("canRegister", false);
+                responseData.put("error", validationResult.getError());
+                responseData.put("conflict", validationResult.getConflict());
+
+                sendSuccessResponse(ctx, responseData, validationResult.getMessage());
+                return;
+            }
+
+            responseData.put("canRegister", true);
+            sendSuccessResponse(ctx, responseData, "Поля регистрации прошли валидацию");
+
+        } catch (Exception e) {
+            logger.error("Ошибка pre-check регистрации", e);
             sendErrorResponse(ctx, 500, "INTERNAL_ERROR", "Сервис временно недоступен");
         }
     }
