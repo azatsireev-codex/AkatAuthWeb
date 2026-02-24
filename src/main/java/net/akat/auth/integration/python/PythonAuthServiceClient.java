@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpClient.Version;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -29,6 +30,7 @@ public class PythonAuthServiceClient {
 
     private synchronized void rebuildClient() {
         this.client = HttpClient.newBuilder()
+                .version(Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
     }
