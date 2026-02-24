@@ -10,24 +10,17 @@ import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
-import com.velocitypowered.api.scheduler.Scheduler;
 import io.javalin.Javalin;
 import net.akat.auth.api.handler.ApiRequestHandler;
-import net.akat.auth.integration.python.FamilyAccessGateway;
-import net.akat.auth.integration.python.LocalFamilyAccessGateway;
-import net.akat.auth.integration.python.RemoteFamilyAccessGateway;
 import net.akat.auth.config.PluginConfig;
-import net.akat.auth.repository.*;
-import net.akat.auth.service.RegistrationService;
-import net.akat.auth.service.WebhookService;
+import net.akat.auth.integration.python.PythonAuthServiceClient;
 import net.akat.auth.util.IpUtils;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
 
 @Plugin(id = "web-auth-plugin", name = "WebAuth", version = "1.0")
 public class WebAuthPlugin {
@@ -36,14 +29,8 @@ public class WebAuthPlugin {
     private final Path dataDirectory;
 
     private PluginConfig config;
-    private RegistrationService registrationService;
-    private WebhookService webhookService;
+    private PythonAuthServiceClient pythonClient;
     private Javalin httpServer;
-    private ApiRequestHandler apiHandler;
-
-    private IpAnalyticsRepository ipAnalyticsRepository;
-    private FamilyAccessRepository familyAccessRepository;
-    private FamilyAccessGateway familyAccessGateway;
 
     @Inject
     public WebAuthPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
@@ -61,46 +48,14 @@ public class WebAuthPlugin {
 
             config = new PluginConfig(dataDirectory.resolve("config.yml"));
             config.load(logger);
-
-            String dbPath = dataDirectory.resolve("database.db").toString();
-            DatabaseManager databaseManager = new DatabaseManager(dbPath);
-            Connection connection = databaseManager.getConnection();
-
-            String analyticsDbPath = dataDirectory.resolve("analytics.db").toString();
-            AnalyticsDatabaseManager analyticsDatabaseManager = new AnalyticsDatabaseManager(analyticsDbPath, logger);
-            Connection analyticsConnection = analyticsDatabaseManager.getConnection();
-
-            PlayerRepository playerRepository = new PlayerRepository(connection);
-            PendingRegistrationRepository pendingRepository = new PendingRegistrationRepository(connection);
-            IpConfirmationRepository ipConfirmationRepository = new IpConfirmationRepository(connection, logger);
-            familyAccessRepository = new FamilyAccessRepository(connection, logger);
-            familyAccessGateway = config.isPythonServiceEnabled()
-                    ? new RemoteFamilyAccessGateway(config, logger)
-                    : new LocalFamilyAccessGateway(familyAccessRepository);
-
-            ipAnalyticsRepository = new IpAnalyticsRepository(analyticsConnection, logger);
-
-            webhookService = new WebhookService(config, logger);
-
-            registrationService = new RegistrationService(
-                    playerRepository,
-                    pendingRepository,
-                    ipConfirmationRepository,
-                    ipAnalyticsRepository,
-                    familyAccessGateway,
-                    config,
-                    logger,
-                    webhookService
-            );
+            pythonClient = new PythonAuthServiceClient(config, logger);
 
             startHttpServer();
             registerCommands();
-            scheduleCleanupTasks();
 
             logger.info("✅ WebAuth плагин успешно инициализирован!");
             logger.info("📡 API доступен на порту: {}", config.getApiPort());
-            logger.info("🌐 Webhook URL для сайта: {}", config.getWebsiteApprovalUrl());
-            logger.info("🧩 Family service mode: {}", config.isPythonServiceEnabled() ? "python-remote" : "local-sqlite");
+            logger.info("🐍 Python service: {}", config.getPythonServiceBaseUrl());
 
         } catch (Exception e) {
             logger.error("❌ Ошибка при инициализации плагина", e);
@@ -147,46 +102,50 @@ public class WebAuthPlugin {
         }
 
         try {
+            String payload;
+            PythonAuthServiceClient.ProxyResponse response;
             switch (args[0].toLowerCase()) {
                 case "create":
                     if (args.length < 3) {
                         source.sendMessage(Component.text("§eИспользование: /webauthfamily create <nickname1> <nickname2>"));
                         return;
                     }
-                    String groupId = familyAccessGateway.createGroup(args[1], args[2]);
-                    source.sendMessage(Component.text("§aСоздана family-группа " + groupId + " для " + args[1] + " и " + args[2]));
+                    payload = String.format("{\"nickname1\":\"%s\",\"nickname2\":\"%s\"}", args[1], args[2]);
+                    response = pythonClient.postWithPythonAuth("/family/create", payload);
                     break;
                 case "add":
                     if (args.length < 3) {
                         source.sendMessage(Component.text("§eИспользование: /webauthfamily add <groupId> <nickname>"));
                         return;
                     }
-                    familyAccessGateway.addMember(args[1], args[2]);
-                    source.sendMessage(Component.text("§aИгрок " + args[2] + " добавлен в группу " + args[1]));
+                    payload = String.format("{\"groupId\":\"%s\",\"nickname\":\"%s\"}", args[1], args[2]);
+                    response = pythonClient.postWithPythonAuth("/family/add", payload);
                     break;
                 case "remove":
                     if (args.length < 2) {
                         source.sendMessage(Component.text("§eИспользование: /webauthfamily remove <nickname>"));
                         return;
                     }
-                    boolean removed = familyAccessGateway.removeMember(args[1]);
-                    source.sendMessage(Component.text(removed
-                            ? "§aИгрок исключён из family-группы: " + args[1]
-                            : "§eИгрок не найден в family-группах: " + args[1]));
+                    payload = String.format("{\"nickname\":\"%s\"}", args[1]);
+                    response = pythonClient.postWithPythonAuth("/family/remove", payload);
                     break;
                 case "delete":
                     if (args.length < 2) {
                         source.sendMessage(Component.text("§eИспользование: /webauthfamily delete <groupId>"));
                         return;
                     }
-                    int deleted = familyAccessGateway.deleteGroup(args[1]);
-                    source.sendMessage(Component.text(deleted > 0
-                            ? "§aУдалена family-группа " + args[1] + " (участников: " + deleted + ")"
-                            : "§eГруппа не найдена: " + args[1]));
+                    payload = String.format("{\"groupId\":\"%s\"}", args[1]);
+                    response = pythonClient.postWithPythonAuth("/family/delete", payload);
                     break;
                 default:
                     source.sendMessage(Component.text("§eНеизвестная подкоманда. Доступно: create, add, remove, delete"));
+                    return;
             }
+
+            source.sendMessage(Component.text(response.statusCode < 400
+                    ? "§aОперация выполнена: " + response.body
+                    : "§cОшибка: " + response.body));
+
         } catch (Exception e) {
             logger.error("Ошибка выполнения команды family", e);
             source.sendMessage(Component.text("§cОшибка выполнения команды. Подробности в консоли."));
@@ -197,10 +156,7 @@ public class WebAuthPlugin {
         try {
             stopHttpServer();
             config.load(logger);
-            webhookService.reloadFromConfig();
-            familyAccessGateway = config.isPythonServiceEnabled()
-                    ? new RemoteFamilyAccessGateway(config, logger)
-                    : new LocalFamilyAccessGateway(familyAccessRepository);
+            pythonClient.reloadFromConfig();
             startHttpServer();
             logger.info("✅ Конфигурация WebAuth перезагружена. Новый API порт: {}", config.getApiPort());
             return true;
@@ -212,7 +168,7 @@ public class WebAuthPlugin {
 
     private void startHttpServer() {
         try {
-            apiHandler = new ApiRequestHandler(registrationService, config, logger);
+            var apiHandler = new ApiRequestHandler(pythonClient, logger);
             httpServer = Javalin.create(javalinConfig -> {
                 javalinConfig.showJavalinBanner = false;
                 javalinConfig.http.defaultContentType = "application/json";
@@ -249,81 +205,34 @@ public class WebAuthPlugin {
         String playerName = player.getUsername();
         String playerIp = IpUtils.getPlayerIp(player);
 
-        try {
-            Long registrationTime = registrationService.getPendingRegistrationTime(playerName);
-            if (registrationTime != null) {
-                handlePendingRegistration(player, playerName, playerIp, registrationTime);
-                return;
-            }
+        Map<String, Object> decision = pythonClient.checkLogin(playerName, playerIp);
+        String code = String.valueOf(decision.getOrDefault("decision", "ERROR"));
 
-            boolean isRegistered = registrationService.isPlayerRegistered(playerName);
-            if (!isRegistered) {
+        switch (code) {
+            case "ALLOW":
+                return;
+            case "NOT_REGISTERED":
                 player.disconnect(createNotRegisteredMessage());
-                ipAnalyticsRepository.logOrUpdateTimestamp(playerName, playerIp);
                 return;
-            }
-
-            boolean ipCheckResult = registrationService.checkAndNotifyNewIp(playerName, playerIp);
-            if (!ipCheckResult) {
-                player.disconnect(createNewIpMessage(playerName, playerIp));
-            }
-
-        } catch (Exception e) {
-            logger.error("Ошибка при проверке регистрации игрока: {}", playerName, e);
-            player.disconnect(Component.text(
-                    "⚠️ Ошибка сервера при проверке аккаунта.\n" +
-                            "Пожалуйста, попробуйте позже."
-            ));
-        }
-    }
-
-    private void handlePendingRegistration(Player player, String playerName, String playerIp, Long registrationTime) {
-        long timePassed = System.currentTimeMillis() - registrationTime;
-        long timePassedSeconds = timePassed / 1000;
-
-        if (timePassed > config.getRegistrationTimeoutSeconds() * 1000L) {
-            registrationService.removeExpiredRegistration(playerName);
-            player.disconnect(createExpiredMessage(timePassedSeconds));
-            return;
-        }
-
-        try {
-            boolean success = registrationService.completeRegistration(playerName, playerIp);
-
-            if (success) {
+            case "PENDING_EXPIRED":
+                long seconds = ((Number) decision.getOrDefault("timePassedSeconds", 0)).longValue();
+                player.disconnect(createExpiredMessage(seconds));
+                return;
+            case "PENDING_COMPLETE_SUCCESS":
                 player.disconnect(createSuccessMessage(playerName));
-                logger.info("✅ Регистрация завершена: {} ({})", playerName, playerIp);
-            } else {
+                return;
+            case "PENDING_IP_MISMATCH":
                 player.disconnect(createIpMismatchMessage());
-                logger.warn("❌ IP mismatch: {} (ожидался другой IP)", playerName);
-            }
-
-        } catch (Exception e) {
-            logger.error("Ошибка при завершении регистрации: {}", playerName, e);
-            player.disconnect(Component.text(
-                    "❌ Ошибка при завершении регистрации.\n" +
-                            "Пожалуйста, обратитесь в поддержку."
-            ));
+                return;
+            case "NEW_IP_CONFIRMATION_REQUIRED":
+                player.disconnect(createNewIpMessage(playerName, playerIp));
+                return;
+            default:
+                player.disconnect(Component.text(
+                        "⚠️ Ошибка сервера при проверке аккаунта.\n" +
+                                "Пожалуйста, попробуйте позже."
+                ));
         }
-    }
-
-    private void scheduleCleanupTasks() {
-        Scheduler scheduler = server.getScheduler();
-        scheduler.buildTask(this, () -> {
-            try {
-                registrationService.cleanupOldRegistrations(3);
-            } catch (Exception e) {
-                logger.error("Ошибка при очистке старых запросов", e);
-            }
-        }).repeat(1, TimeUnit.HOURS).schedule();
-
-        scheduler.buildTask(this, () -> {
-            try {
-                registrationService.cleanupExpiredIpConfirmations();
-            } catch (Exception e) {
-                logger.error("Ошибка при очистке истекших подтверждений IP", e);
-            }
-        }).repeat(1, TimeUnit.MINUTES).schedule();
     }
 
     private Component createNotRegisteredMessage() {
