@@ -9,6 +9,7 @@ import net.akat.auth.model.PendingRegistration;
 import net.akat.auth.model.Player;
 import net.akat.auth.repository.IpAnalyticsRepository;
 import net.akat.auth.repository.IpConfirmationRepository;
+import net.akat.auth.repository.FamilyAccessRepository;
 import net.akat.auth.repository.PendingRegistrationRepository;
 import net.akat.auth.repository.PlayerRepository;
 import net.akat.auth.service.validator.RegistrationValidator;
@@ -27,6 +28,7 @@ public class RegistrationService {
     private final List<RegistrationValidator> validators;
     private final WebhookService webhookService;
     private final IpAnalyticsRepository ipAnalyticsRepository;
+    private final FamilyAccessRepository familyAccessRepository;
 
     @Inject
     public RegistrationService(
@@ -34,10 +36,12 @@ public class RegistrationService {
             PendingRegistrationRepository pendingRegistrationRepository,
             IpConfirmationRepository ipConfirmationRepository,
             IpAnalyticsRepository ipAnalyticsRepository,
+            FamilyAccessRepository familyAccessRepository,
             PluginConfig config,
             Logger logger,
             WebhookService webhookService) {
         this.ipAnalyticsRepository = ipAnalyticsRepository;
+        this.familyAccessRepository = familyAccessRepository;
         this.playerRepository = playerRepository;
         this.pendingRegistrationRepository = pendingRegistrationRepository;
         this.ipConfirmationRepository = ipConfirmationRepository;
@@ -48,18 +52,9 @@ public class RegistrationService {
     }
 
     public RegistrationResponse processRegistration(RegistrationRequest request) {
-        for (RegistrationValidator validator : validators) {
-            RegistrationValidator.ValidationResult result = validator.validate(request, playerRepository);
-            if (!result.isValid()) {
-                if (result.getConflict() != null) {
-                    return RegistrationResponse.errorWithConflict(
-                            result.getErrorCode(),
-                            result.getErrorMessage(),
-                            result.getConflict()
-                    );
-                }
-                return RegistrationResponse.error(result.getErrorCode(), result.getErrorMessage());
-            }
+        RegistrationResponse validationResult = validateRegistration(request);
+        if (validationResult != null) {
+            return validationResult;
         }
 
         // Создаём ожидающую регистрацию
@@ -75,6 +70,35 @@ public class RegistrationService {
 
         logger.info("Регистрация ожидает подтверждения: {} (5 мин)", request.getNickname());
         return RegistrationResponse.successPending();
+    }
+
+    public RegistrationResponse validateRegistration(RegistrationRequest request) {
+        for (RegistrationValidator validator : validators) {
+            RegistrationValidator.ValidationResult result = validator.validate(request, playerRepository);
+            if (!result.isValid()) {
+                if ("IP_IN_USE".equals(result.getErrorCode()) && result.getConflict() != null) {
+                    boolean sameFamily = familyAccessRepository.areInSameGroup(
+                            request.getNickname(),
+                            result.getConflict()
+                    );
+
+                    if (sameFamily) {
+                        continue;
+                    }
+                }
+
+                if (result.getConflict() != null) {
+                    return RegistrationResponse.errorWithConflict(
+                            result.getErrorCode(),
+                            result.getErrorMessage(),
+                            result.getConflict()
+                    );
+                }
+                return RegistrationResponse.error(result.getErrorCode(), result.getErrorMessage());
+            }
+        }
+
+        return null;
     }
 
     public boolean completeRegistration(String nickname, String ipAddress) {

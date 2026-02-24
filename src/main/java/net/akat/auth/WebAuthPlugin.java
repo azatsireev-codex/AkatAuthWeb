@@ -1,14 +1,17 @@
 package net.akat.auth;
 
 import com.google.inject.Inject;
+import com.velocitypowered.api.command.CommandSource;
+import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
-import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.scheduler.Scheduler;
+import io.javalin.Javalin;
 import net.akat.auth.api.handler.ApiRequestHandler;
 import net.akat.auth.config.PluginConfig;
 import net.akat.auth.repository.*;
@@ -17,8 +20,6 @@ import net.akat.auth.service.WebhookService;
 import net.akat.auth.util.IpUtils;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
-
-import io.javalin.Javalin;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,13 +33,13 @@ public class WebAuthPlugin {
     private final Path dataDirectory;
 
     private PluginConfig config;
-    private DatabaseManager databaseManager;
     private RegistrationService registrationService;
     private WebhookService webhookService;
     private Javalin httpServer;
+    private ApiRequestHandler apiHandler;
 
-    private AnalyticsDatabaseManager analyticsDatabaseManager;
     private IpAnalyticsRepository ipAnalyticsRepository;
+    private FamilyAccessRepository familyAccessRepository;
 
     @Inject
     public WebAuthPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
@@ -49,25 +50,26 @@ public class WebAuthPlugin {
 
     @Subscribe
     public void onInitialize(ProxyInitializeEvent event) {
-
         try {
             if (!Files.exists(dataDirectory)) {
                 Files.createDirectories(dataDirectory);
             }
 
-            config = new PluginConfig();
-            String dbPath = dataDirectory.resolve("database.db").toString();
+            config = new PluginConfig(dataDirectory.resolve("config.yml"));
+            config.load(logger);
 
-            databaseManager = new DatabaseManager(dbPath);
+            String dbPath = dataDirectory.resolve("database.db").toString();
+            DatabaseManager databaseManager = new DatabaseManager(dbPath);
             Connection connection = databaseManager.getConnection();
 
             String analyticsDbPath = dataDirectory.resolve("analytics.db").toString();
-            analyticsDatabaseManager = new AnalyticsDatabaseManager(analyticsDbPath, logger);
+            AnalyticsDatabaseManager analyticsDatabaseManager = new AnalyticsDatabaseManager(analyticsDbPath, logger);
             Connection analyticsConnection = analyticsDatabaseManager.getConnection();
 
             PlayerRepository playerRepository = new PlayerRepository(connection);
             PendingRegistrationRepository pendingRepository = new PendingRegistrationRepository(connection);
             IpConfirmationRepository ipConfirmationRepository = new IpConfirmationRepository(connection, logger);
+            familyAccessRepository = new FamilyAccessRepository(connection, logger);
 
             ipAnalyticsRepository = new IpAnalyticsRepository(analyticsConnection, logger);
 
@@ -78,13 +80,14 @@ public class WebAuthPlugin {
                     pendingRepository,
                     ipConfirmationRepository,
                     ipAnalyticsRepository,
+                    familyAccessRepository,
                     config,
                     logger,
                     webhookService
             );
 
-            startHttpServer(playerRepository, pendingRepository);
-
+            startHttpServer();
+            registerCommands();
             scheduleCleanupTasks();
 
             logger.info("✅ WebAuth плагин успешно инициализирован!");
@@ -97,24 +100,135 @@ public class WebAuthPlugin {
         }
     }
 
-    private void startHttpServer(PlayerRepository playerRepository,
-                                 PendingRegistrationRepository pendingRepository) {
+    private void registerCommands() {
+        server.getCommandManager().register(
+                server.getCommandManager().metaBuilder("webauthreload").plugin(this).build(),
+                (SimpleCommand) invocation -> {
+                    CommandSource source = invocation.source();
+                    if (!(source.hasPermission("webauth.reload") || source instanceof com.velocitypowered.api.proxy.ConsoleCommandSource)) {
+                        source.sendMessage(Component.text("§cНедостаточно прав."));
+                        return;
+                    }
+
+                    boolean reloaded = reloadConfigAndApply();
+                    if (reloaded) {
+                        source.sendMessage(Component.text("§aWebAuth конфигурация успешно перезагружена."));
+                    } else {
+                        source.sendMessage(Component.text("§cОшибка перезагрузки конфигурации. Проверьте консоль."));
+                    }
+                }
+        );
+
+        server.getCommandManager().register(
+                server.getCommandManager().metaBuilder("webauthfamily").plugin(this).build(),
+                (SimpleCommand) this::handleFamilyCommand
+        );
+    }
+
+    private void handleFamilyCommand(SimpleCommand.Invocation invocation) {
+        CommandSource source = invocation.source();
+        if (!(source instanceof com.velocitypowered.api.proxy.ConsoleCommandSource)) {
+            source.sendMessage(Component.text("§cЭта команда доступна только из консоли."));
+            return;
+        }
+
+        String[] args = invocation.arguments();
+        if (args.length == 0) {
+            source.sendMessage(Component.text("§eИспользование: /webauthfamily <create|add|remove|delete> ..."));
+            return;
+        }
+
         try {
+            switch (args[0].toLowerCase()) {
+                case "create":
+                    if (args.length < 3) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily create <nickname1> <nickname2>"));
+                        return;
+                    }
+                    String groupId = familyAccessRepository.createGroupWithMembers(args[1], args[2]);
+                    source.sendMessage(Component.text("§aСоздана family-группа " + groupId + " для " + args[1] + " и " + args[2]));
+                    break;
+                case "add":
+                    if (args.length < 3) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily add <groupId> <nickname>"));
+                        return;
+                    }
+                    familyAccessRepository.addMember(args[1], args[2]);
+                    source.sendMessage(Component.text("§aИгрок " + args[2] + " добавлен в группу " + args[1]));
+                    break;
+                case "remove":
+                    if (args.length < 2) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily remove <nickname>"));
+                        return;
+                    }
+                    boolean removed = familyAccessRepository.removeMember(args[1]);
+                    source.sendMessage(Component.text(removed
+                            ? "§aИгрок исключён из family-группы: " + args[1]
+                            : "§eИгрок не найден в family-группах: " + args[1]));
+                    break;
+                case "delete":
+                    if (args.length < 2) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily delete <groupId>"));
+                        return;
+                    }
+                    int deleted = familyAccessRepository.deleteGroup(args[1]);
+                    source.sendMessage(Component.text(deleted > 0
+                            ? "§aУдалена family-группа " + args[1] + " (участников: " + deleted + ")"
+                            : "§eГруппа не найдена: " + args[1]));
+                    break;
+                default:
+                    source.sendMessage(Component.text("§eНеизвестная подкоманда. Доступно: create, add, remove, delete"));
+            }
+        } catch (Exception e) {
+            logger.error("Ошибка выполнения команды family", e);
+            source.sendMessage(Component.text("§cОшибка выполнения команды. Подробности в консоли."));
+        }
+    }
+
+    private synchronized boolean reloadConfigAndApply() {
+        try {
+            stopHttpServer();
+            config.load(logger);
+            webhookService.reloadFromConfig();
+            startHttpServer();
+            logger.info("✅ Конфигурация WebAuth перезагружена. Новый API порт: {}", config.getApiPort());
+            return true;
+        } catch (Exception e) {
+            logger.error("❌ Ошибка при перезагрузке конфигурации WebAuth", e);
+            return false;
+        }
+    }
+
+    private void startHttpServer() {
+        try {
+            apiHandler = new ApiRequestHandler(registrationService, config, logger);
             httpServer = Javalin.create(javalinConfig -> {
                 javalinConfig.showJavalinBanner = false;
                 javalinConfig.http.defaultContentType = "application/json";
             }).start(config.getApiPort());
 
-            var apiHandler = new ApiRequestHandler(registrationService, config, logger);
-
             httpServer.post("/internal/players/account/verify", apiHandler);
             httpServer.post("/internal/connection-requests/approve", apiHandler);
+            httpServer.post("/internal/players/ip/check", apiHandler);
 
             logger.info("✅ HTTP сервер запущен на порту {}", config.getApiPort());
 
         } catch (Exception e) {
             logger.error("❌ Ошибка при запуске HTTP сервера", e);
             throw new RuntimeException("Failed to start HTTP server", e);
+        }
+    }
+
+    private void stopHttpServer() {
+        if (httpServer == null) {
+            return;
+        }
+
+        try {
+            httpServer.stop();
+            logger.info("ℹ️ HTTP сервер остановлен");
+        } catch (Exception e) {
+            logger.warn("⚠️ Не удалось корректно остановить HTTP сервер", e);
         }
     }
 
@@ -141,7 +255,6 @@ public class WebAuthPlugin {
             boolean ipCheckResult = registrationService.checkAndNotifyNewIp(playerName, playerIp);
             if (!ipCheckResult) {
                 player.disconnect(createNewIpMessage(playerName, playerIp));
-                return;
             }
 
         } catch (Exception e) {
@@ -157,7 +270,6 @@ public class WebAuthPlugin {
         long timePassed = System.currentTimeMillis() - registrationTime;
         long timePassedSeconds = timePassed / 1000;
 
-        // Проверяем не истекло ли время
         if (timePassed > config.getRegistrationTimeoutSeconds() * 1000L) {
             registrationService.removeExpiredRegistration(playerName);
             player.disconnect(createExpiredMessage(timePassedSeconds));
