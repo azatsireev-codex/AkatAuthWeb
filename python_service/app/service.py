@@ -1,6 +1,10 @@
 from dataclasses import dataclass
+import json
 import re
 import time
+import urllib.error
+import urllib.request
+
 from .repository import AuthRepository
 
 
@@ -9,6 +13,11 @@ class AuthFacade:
     repository: AuthRepository
     registration_timeout_seconds: int = 300
     strict_ip_check: bool = True
+    website_url: str = "http://127.0.0.1:8998"
+    website_api_path: str = "/internal/players/account/approve"
+    website_api_key: str = "change-me-website-api-key"
+    website_timeout_seconds: int = 10
+    website_new_ip_path: str = "/internal/players/verify"
 
     def precheck_registration(self, nickname: str, email: str, ip_address: str):
         err = self._validate(nickname, email, ip_address)
@@ -21,12 +30,22 @@ class AuthFacade:
         if err:
             return {"success": False, "status": 409, **err}
         self.repository.save_pending(nickname, email, ip_address)
-        return {"success": True, "status": 200, "message": "У вас есть 5 минут чтобы зайти на сервер", "timeout": 300}
+        return {
+            "success": True,
+            "status": 200,
+            "message": "У вас есть 5 минут чтобы зайти на сервер",
+            "timeout": self.registration_timeout_seconds,
+        }
 
     def approve_new_ip(self, nickname: str, _ip_address: str):
         conf = self.repository.get_confirmation(nickname)
         if not conf:
-            return {"success": False, "status": 404, "error": "CONFIRMATION_EXPIRED", "message": "Время подтверждения запроса истекло"}
+            return {
+                "success": False,
+                "status": 404,
+                "error": "CONFIRMATION_EXPIRED",
+                "message": "Время подтверждения запроса истекло",
+            }
         new_ip = conf[0]
         self.repository.update_original_ip(nickname, new_ip)
         self.repository.remove_confirmation(nickname)
@@ -43,8 +62,10 @@ class AuthFacade:
                 return {"decision": "PENDING_EXPIRED", "timePassedSeconds": passed_s}
             if self.strict_ip_check and pending_ip != ip_address:
                 return {"decision": "PENDING_IP_MISMATCH"}
+
             self.repository.save_player(nickname, email, pending_ip, ip_address)
             self.repository.delete_pending(nickname)
+            self._notify_website_approval(nickname)
             return {"decision": "PENDING_COMPLETE_SUCCESS"}
 
         player = self.repository.find_player(nickname)
@@ -60,6 +81,7 @@ class AuthFacade:
             return {"decision": "NEW_IP_CONFIRMATION_REQUIRED"}
 
         self.repository.upsert_confirmation(nickname, ip_address, original_ip)
+        self._notify_website_new_ip(nickname, ip_address)
         return {"decision": "NEW_IP_CONFIRMATION_REQUIRED"}
 
     # family methods
@@ -100,6 +122,40 @@ class AuthFacade:
             return {"error": "MISSING_IP", "message": "IP адрес обязателен"}
         conflict_ip = self.repository.find_by_ip(ip_address)
         if conflict_ip and not self.repository.same_family(nickname, conflict_ip):
-            return {"error": "IP_IN_USE", "message": "Этот IP-адрес уже используется другим аккаунтом", "conflict": conflict_ip}
+            return {
+                "error": "IP_IN_USE",
+                "message": "Этот IP-адрес уже используется другим аккаунтом",
+                "conflict": conflict_ip,
+            }
 
         return None
+
+    def _notify_website_approval(self, nickname: str):
+        self._post_to_website(
+            self.website_api_path,
+            {"nickname": nickname},
+        )
+
+    def _notify_website_new_ip(self, nickname: str, ip_address: str):
+        self._post_to_website(
+            self.website_new_ip_path,
+            {"nickname": nickname, "ipAddress": ip_address},
+        )
+
+    def _post_to_website(self, path: str, payload: dict):
+        url = self.website_url.rstrip("/") + path
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.website_api_key}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.website_timeout_seconds):
+                return
+        except urllib.error.URLError:
+            return

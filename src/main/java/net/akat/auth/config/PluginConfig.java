@@ -12,32 +12,15 @@ import java.util.Map;
 
 @Singleton
 public class PluginConfig {
-    private static final int DEFAULT_REGISTRATION_TIMEOUT_SECONDS = 300;
     private static final int DEFAULT_API_PORT = 8668;
     private static final String DEFAULT_API_KEY = "change-me-api-key";
-    private static final boolean DEFAULT_STRICT_IP_CHECK = true;
-    private static final String DEFAULT_WEBSITE_URL = "http://127.0.0.1:8998";
-    private static final String DEFAULT_WEBSITE_API_PATH = "/internal/players/account/approve";
-    private static final String DEFAULT_WEBSITE_API_KEY = "change-me-website-api-key";
-    private static final int DEFAULT_WEBSITE_TIMEOUT_SECONDS = 10;
-    private static final String DEFAULT_WEBSITE_NEW_IP_PATH = "/internal/players/verify";
-    private static final boolean DEFAULT_PYTHON_SERVICE_ENABLED = false;
     private static final String DEFAULT_PYTHON_SERVICE_BASE_URL = "http://127.0.0.1:9000";
     private static final String DEFAULT_PYTHON_SERVICE_API_KEY = "change-me-python-service-key";
 
     private final Path configPath;
 
-    private int registrationTimeoutSeconds = DEFAULT_REGISTRATION_TIMEOUT_SECONDS;
     private int apiPort = DEFAULT_API_PORT;
     private String apiKey = DEFAULT_API_KEY;
-    private boolean strictIpCheck = DEFAULT_STRICT_IP_CHECK;
-
-    private String websiteUrl = DEFAULT_WEBSITE_URL;
-    private String websiteApiPath = DEFAULT_WEBSITE_API_PATH;
-    private String websiteApiKey = DEFAULT_WEBSITE_API_KEY;
-    private int websiteTimeoutSeconds = DEFAULT_WEBSITE_TIMEOUT_SECONDS;
-    private String websiteNewIpPath = DEFAULT_WEBSITE_NEW_IP_PATH;
-    private boolean pythonServiceEnabled = DEFAULT_PYTHON_SERVICE_ENABLED;
     private String pythonServiceBaseUrl = DEFAULT_PYTHON_SERVICE_BASE_URL;
     private String pythonServiceApiKey = DEFAULT_PYTHON_SERVICE_API_KEY;
 
@@ -53,17 +36,8 @@ public class PluginConfig {
             }
 
             Map<String, String> values = parseYamlLikeFile(Files.readAllLines(configPath));
-            registrationTimeoutSeconds = parseInt(values.get("registrationTimeoutSeconds"), DEFAULT_REGISTRATION_TIMEOUT_SECONDS);
             apiPort = parseInt(values.get("apiPort"), DEFAULT_API_PORT);
             apiKey = valueOrDefault(values.get("apiKey"), DEFAULT_API_KEY);
-            strictIpCheck = parseBoolean(values.get("strictIpCheck"), DEFAULT_STRICT_IP_CHECK);
-
-            websiteUrl = valueOrDefault(values.get("websiteUrl"), DEFAULT_WEBSITE_URL);
-            websiteApiPath = valueOrDefault(values.get("websiteApiPath"), DEFAULT_WEBSITE_API_PATH);
-            websiteApiKey = valueOrDefault(values.get("websiteApiKey"), DEFAULT_WEBSITE_API_KEY);
-            websiteTimeoutSeconds = parseInt(values.get("websiteTimeoutSeconds"), DEFAULT_WEBSITE_TIMEOUT_SECONDS);
-            websiteNewIpPath = valueOrDefault(values.get("websiteNewIpPath"), DEFAULT_WEBSITE_NEW_IP_PATH);
-            pythonServiceEnabled = parseBoolean(values.get("pythonServiceEnabled"), DEFAULT_PYTHON_SERVICE_ENABLED);
             pythonServiceBaseUrl = valueOrDefault(values.get("pythonServiceBaseUrl"), DEFAULT_PYTHON_SERVICE_BASE_URL);
             pythonServiceApiKey = valueOrDefault(values.get("pythonServiceApiKey"), DEFAULT_PYTHON_SERVICE_API_KEY);
 
@@ -75,16 +49,8 @@ public class PluginConfig {
     private void saveDefaults() throws IOException {
         List<String> lines = List.of(
                 "# WebAuth plugin config",
-                "registrationTimeoutSeconds: " + DEFAULT_REGISTRATION_TIMEOUT_SECONDS,
                 "apiPort: " + DEFAULT_API_PORT,
                 "apiKey: \"" + DEFAULT_API_KEY + "\"",
-                "strictIpCheck: " + DEFAULT_STRICT_IP_CHECK,
-                "websiteUrl: \"" + DEFAULT_WEBSITE_URL + "\"",
-                "websiteApiPath: \"" + DEFAULT_WEBSITE_API_PATH + "\"",
-                "websiteApiKey: \"" + DEFAULT_WEBSITE_API_KEY + "\"",
-                "websiteTimeoutSeconds: " + DEFAULT_WEBSITE_TIMEOUT_SECONDS,
-                "websiteNewIpPath: \"" + DEFAULT_WEBSITE_NEW_IP_PATH + "\"",
-                "pythonServiceEnabled: " + DEFAULT_PYTHON_SERVICE_ENABLED,
                 "pythonServiceBaseUrl: \"" + DEFAULT_PYTHON_SERVICE_BASE_URL + "\"",
                 "pythonServiceApiKey: \"" + DEFAULT_PYTHON_SERVICE_API_KEY + "\""
         );
@@ -121,34 +87,12 @@ public class PluginConfig {
         }
     }
 
-    private boolean parseBoolean(String value, boolean fallback) {
-        if (value == null) return fallback;
-        return Boolean.parseBoolean(value);
-    }
-
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    public int getRegistrationTimeoutSeconds() { return registrationTimeoutSeconds; }
     public int getApiPort() { return apiPort; }
     public String getApiKey() { return apiKey; }
-    public boolean isStrictIpCheck() { return strictIpCheck; }
-
-    public String getWebsiteUrl() { return websiteUrl; }
-    public String getWebsiteApiPath() { return websiteApiPath; }
-    public String getWebsiteApiKey() { return websiteApiKey; }
-    public int getWebsiteTimeoutSeconds() { return websiteTimeoutSeconds; }
-    public String getWebsiteApprovalUrl() {
-        return websiteUrl + websiteApiPath;
-    }
-
-    public String getWebsiteNewIpPath() { return websiteNewIpPath; }
-    public String getWebsiteNewIpUrl() {
-        return websiteUrl + websiteNewIpPath;
-    }
-
-    public boolean isPythonServiceEnabled() { return pythonServiceEnabled; }
     public String getPythonServiceBaseUrl() { return pythonServiceBaseUrl; }
     public String getPythonServiceApiKey() { return pythonServiceApiKey; }
 }

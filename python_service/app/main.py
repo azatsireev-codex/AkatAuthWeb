@@ -7,7 +7,16 @@ from .service import AuthFacade
 
 
 app = FastAPI(title="Akat Auth Python Service")
-facade = AuthFacade(AuthRepository(settings.db_path))
+facade = AuthFacade(
+    repository=AuthRepository(settings.db_path),
+    registration_timeout_seconds=settings.registration_timeout_seconds,
+    strict_ip_check=settings.strict_ip_check,
+    website_url=settings.website_url,
+    website_api_path=settings.website_api_path,
+    website_api_key=settings.website_api_key,
+    website_timeout_seconds=settings.website_timeout_seconds,
+    website_new_ip_path=settings.website_new_ip_path,
+)
 
 
 def check_auth(authorization: str | None):
