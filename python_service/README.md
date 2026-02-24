@@ -68,3 +68,53 @@ pythonServiceApiKey: "change-me-python-service-key"
 
 - `apiKey` используется сайтом при обращении к плагину.
 - `pythonServiceApiKey` используется плагином для вызовов Python service.
+
+## Проверка регистрации через `curl`
+
+Если сайт отправляет запросы в плагин на `8668`, проверять нужно именно URL плагина.
+
+```bash
+API_KEY="730222ffe0b86a26e0a6d0a6055fc99520b20143fc01c3b69e80b4030f09df54a072892381846863b8393c95bbbbfea52a8357b80eb228d4da8f729388fe6e85"
+PLUGIN_URL="http://127.0.0.1:8668"
+```
+
+### 1) Precheck (до кода из почты)
+
+```bash
+curl -i -X POST "$PLUGIN_URL/internal/players/ip/check" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nickname": "TestPlayer",
+    "email": "test@example.com",
+    "ipAddress": "203.0.113.10"
+  }'
+```
+
+### 2) Старт регистрации
+
+```bash
+curl -i -X POST "$PLUGIN_URL/internal/players/account/verify" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nickname": "TestPlayer",
+    "email": "test@example.com",
+    "ipAddress": "203.0.113.10"
+  }'
+```
+
+### 3) Подтверждение нового IP
+
+```bash
+curl -i -X POST "$PLUGIN_URL/internal/connection-requests/approve" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nickname": "TestPlayer",
+    "ipAddress": "203.0.113.10"
+  }'
+```
+
+> Примечание: `8998` — это обычно порт сайта для обратных webhook-вызовов из Python сервиса,
+> а не порт, куда сайт шлёт эти три registration-запроса.
