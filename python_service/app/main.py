@@ -31,6 +31,8 @@ class RegistrationRequest(BaseModel):
     nickname: str | None = None
     email: str | None = None
     ipAddress: str | None = None
+    ipTimeZone: str | None = None
+    clientTimeZone: str | None = None
 
 
 class ApproveRequest(BaseModel):
@@ -81,7 +83,13 @@ def precheck(payload: RegistrationRequest, authorization: str | None = Header(de
 @app.post("/internal/players/account/verify")
 def register(payload: RegistrationRequest, authorization: str | None = Header(default=None)):
     check_auth(authorization)
-    data = facade.start_registration(payload.nickname, payload.email, payload.ipAddress)
+    data = facade.start_registration(
+        payload.nickname,
+        payload.email,
+        payload.ipAddress,
+        payload.ipTimeZone,
+        payload.clientTimeZone,
+    )
     if not data["success"]:
         return {"success": False, "error": data.get("error"), "message": data.get("message")}
     return {"success": True, "data": {"status": "pending", "timeout": data["timeout"]}, "message": data["message"]}

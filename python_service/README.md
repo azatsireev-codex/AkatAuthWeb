@@ -87,7 +87,9 @@ curl -i -X POST "$PLUGIN_URL/internal/players/ip/check" \
   -d '{
     "nickname": "TestPlayer",
     "email": "test@example.com",
-    "ipAddress": "203.0.113.10"
+    "ipAddress": "203.0.113.10",
+    "ipTimeZone": "Europe/Moscow",
+    "clientTimeZone": "Europe/Moscow"
   }'
 ```
 
@@ -100,7 +102,9 @@ curl -i -X POST "$PLUGIN_URL/internal/players/account/verify" \
   -d '{
     "nickname": "TestPlayer",
     "email": "test@example.com",
-    "ipAddress": "203.0.113.10"
+    "ipAddress": "203.0.113.10",
+    "ipTimeZone": "Europe/Moscow",
+    "clientTimeZone": "Europe/Moscow"
   }'
 ```
 

@@ -25,11 +25,18 @@ class AuthFacade:
             return {"canRegister": False, **err}
         return {"canRegister": True}
 
-    def start_registration(self, nickname: str, email: str, ip_address: str):
+    def start_registration(
+        self,
+        nickname: str,
+        email: str,
+        ip_address: str,
+        ip_time_zone: str | None = None,
+        client_time_zone: str | None = None,
+    ):
         err = self._validate(nickname, email, ip_address)
         if err:
             return {"success": False, "status": 409, **err}
-        self.repository.save_pending(nickname, email, ip_address)
+        self.repository.save_pending(nickname, email, ip_address, ip_time_zone, client_time_zone)
         return {
             "success": True,
             "status": 200,
@@ -55,7 +62,7 @@ class AuthFacade:
         pending = self.repository.get_pending(nickname)
         now_ms = int(time.time() * 1000)
         if pending:
-            _, email, pending_ip, created_at = pending
+            _, email, pending_ip, created_at, ip_time_zone, client_time_zone = pending
             passed_s = int((now_ms - created_at) / 1000)
             if now_ms - created_at > self.registration_timeout_seconds * 1000:
                 self.repository.delete_pending(nickname)
@@ -63,7 +70,7 @@ class AuthFacade:
             if self.strict_ip_check and pending_ip != ip_address:
                 return {"decision": "PENDING_IP_MISMATCH"}
 
-            self.repository.save_player(nickname, email, pending_ip, ip_address)
+            self.repository.save_player(nickname, email, pending_ip, ip_address, ip_time_zone, client_time_zone)
             self.repository.delete_pending(nickname)
             self._notify_website_approval(nickname)
             return {"decision": "PENDING_COMPLETE_SUCCESS"}
