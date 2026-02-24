@@ -39,6 +39,7 @@ public class WebAuthPlugin {
     private ApiRequestHandler apiHandler;
 
     private IpAnalyticsRepository ipAnalyticsRepository;
+    private FamilyAccessRepository familyAccessRepository;
 
     @Inject
     public WebAuthPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
@@ -68,6 +69,7 @@ public class WebAuthPlugin {
             PlayerRepository playerRepository = new PlayerRepository(connection);
             PendingRegistrationRepository pendingRepository = new PendingRegistrationRepository(connection);
             IpConfirmationRepository ipConfirmationRepository = new IpConfirmationRepository(connection, logger);
+            familyAccessRepository = new FamilyAccessRepository(connection, logger);
 
             ipAnalyticsRepository = new IpAnalyticsRepository(analyticsConnection, logger);
 
@@ -78,6 +80,7 @@ public class WebAuthPlugin {
                     pendingRepository,
                     ipConfirmationRepository,
                     ipAnalyticsRepository,
+                    familyAccessRepository,
                     config,
                     logger,
                     webhookService
@@ -115,6 +118,71 @@ public class WebAuthPlugin {
                     }
                 }
         );
+
+        server.getCommandManager().register(
+                server.getCommandManager().metaBuilder("webauthfamily").plugin(this).build(),
+                (SimpleCommand) this::handleFamilyCommand
+        );
+    }
+
+    private void handleFamilyCommand(SimpleCommand.Invocation invocation) {
+        CommandSource source = invocation.source();
+        if (!(source instanceof com.velocitypowered.api.proxy.ConsoleCommandSource)) {
+            source.sendMessage(Component.text("§cЭта команда доступна только из консоли."));
+            return;
+        }
+
+        String[] args = invocation.arguments();
+        if (args.length == 0) {
+            source.sendMessage(Component.text("§eИспользование: /webauthfamily <create|add|remove|delete> ..."));
+            return;
+        }
+
+        try {
+            switch (args[0].toLowerCase()) {
+                case "create":
+                    if (args.length < 3) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily create <nickname1> <nickname2>"));
+                        return;
+                    }
+                    String groupId = familyAccessRepository.createGroupWithMembers(args[1], args[2]);
+                    source.sendMessage(Component.text("§aСоздана family-группа " + groupId + " для " + args[1] + " и " + args[2]));
+                    break;
+                case "add":
+                    if (args.length < 3) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily add <groupId> <nickname>"));
+                        return;
+                    }
+                    familyAccessRepository.addMember(args[1], args[2]);
+                    source.sendMessage(Component.text("§aИгрок " + args[2] + " добавлен в группу " + args[1]));
+                    break;
+                case "remove":
+                    if (args.length < 2) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily remove <nickname>"));
+                        return;
+                    }
+                    boolean removed = familyAccessRepository.removeMember(args[1]);
+                    source.sendMessage(Component.text(removed
+                            ? "§aИгрок исключён из family-группы: " + args[1]
+                            : "§eИгрок не найден в family-группах: " + args[1]));
+                    break;
+                case "delete":
+                    if (args.length < 2) {
+                        source.sendMessage(Component.text("§eИспользование: /webauthfamily delete <groupId>"));
+                        return;
+                    }
+                    int deleted = familyAccessRepository.deleteGroup(args[1]);
+                    source.sendMessage(Component.text(deleted > 0
+                            ? "§aУдалена family-группа " + args[1] + " (участников: " + deleted + ")"
+                            : "§eГруппа не найдена: " + args[1]));
+                    break;
+                default:
+                    source.sendMessage(Component.text("§eНеизвестная подкоманда. Доступно: create, add, remove, delete"));
+            }
+        } catch (Exception e) {
+            logger.error("Ошибка выполнения команды family", e);
+            source.sendMessage(Component.text("§cОшибка выполнения команды. Подробности в консоли."));
+        }
     }
 
     private synchronized boolean reloadConfigAndApply() {
