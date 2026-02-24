@@ -228,56 +228,34 @@ public class WebAuthPlugin {
                 player.disconnect(createNewIpMessage(playerName, playerIp));
                 return;
             default:
-                player.disconnect(Component.text(
-                        "⚠️ Ошибка сервера при проверке аккаунта.\n" +
-                                "Пожалуйста, попробуйте позже."
-                ));
+                player.disconnect(Component.text(config.getMessageServerError()));
         }
     }
 
     private Component createNotRegisteredMessage() {
-        return Component.text(
-                "§c❌ Вы не зарегистрированы!\n" +
-                        "§fПожалуйста, зарегистрируйтесь на нашем сайте.\n" +
-                        "После регистрации у вас будет 5 минут чтобы зайти на сервер.\n\n" +
-                        "§e🔗 Ссылка на сайт: §bwww.neft.games"
-        );
+        return Component.text(config.getMessageNotRegistered());
     }
 
     private Component createExpiredMessage(long timePassedSeconds) {
-        return Component.text(
-                "§e⏰ Время на регистрацию истекло!\n" +
-                        "§fВы зашли через " + timePassedSeconds + " секунд.\n" +
-                        "Пожалуйста, начните регистрацию заново на сайте.\n\n" +
-                        "§cВнимание: У вас всего 5 минут после регистрации на сайте!"
-        );
+        String text = config.getMessageExpired()
+                .replace("{timePassedSeconds}", String.valueOf(timePassedSeconds));
+        return Component.text(text);
     }
 
     private Component createSuccessMessage(String playerName) {
-        return Component.text(
-                "§a✅ Регистрация успешно завершена!\n" +
-                        "§fТеперь вы можете войти на сервер и начать играть.\n\n" +
-                        "§eВаш ник: §b" + playerName
-        );
+        String text = config.getMessageSuccess()
+                .replace("{playerName}", playerName);
+        return Component.text(text);
     }
 
     private Component createIpMismatchMessage() {
-        return Component.text(
-                "§c❌ Ошибка регистрации!\n" +
-                        "§fIP-адрес игры не совпадает с тем, с которого вы регистрировались на сайте.\n\n" +
-                        "§fПожалуйста, зарегистрируйтесь заново."
-        );
+        return Component.text(config.getMessageIpMismatch());
     }
 
     private Component createNewIpMessage(String playerName, String newIp) {
-        return Component.text(
-                "§c⚠ Обнаружен новый IP-адрес!\n\n" +
-                        "§fПожалуйста, подтвердите вход с нового IP:\n" +
-                        "§b1. §fПерейдите на наш сайт\n" +
-                        "§b2. §fЗайдите в свой аккаунт " + playerName + "\n" +
-                        "§b3. §fПодтвердите новый IP-адрес\n\n" +
-                        "§e🔗 Ссылка на сайт: §bwww.neft.games\n" +
-                        "§fПосле подтверждения попробуйте зайти снова."
-        );
+        String text = config.getMessageNewIp()
+                .replace("{playerName}", playerName)
+                .replace("{newIp}", newIp);
+        return Component.text(text);
     }
 }
