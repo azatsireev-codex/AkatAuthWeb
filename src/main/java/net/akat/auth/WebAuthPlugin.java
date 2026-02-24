@@ -1,14 +1,17 @@
 package net.akat.auth;
 
 import com.google.inject.Inject;
+import com.velocitypowered.api.command.CommandSource;
+import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
-import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.scheduler.Scheduler;
+import io.javalin.Javalin;
 import net.akat.auth.api.handler.ApiRequestHandler;
 import net.akat.auth.config.PluginConfig;
 import net.akat.auth.repository.*;
@@ -17,8 +20,6 @@ import net.akat.auth.service.WebhookService;
 import net.akat.auth.util.IpUtils;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
-
-import io.javalin.Javalin;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,12 +33,11 @@ public class WebAuthPlugin {
     private final Path dataDirectory;
 
     private PluginConfig config;
-    private DatabaseManager databaseManager;
     private RegistrationService registrationService;
     private WebhookService webhookService;
     private Javalin httpServer;
+    private ApiRequestHandler apiHandler;
 
-    private AnalyticsDatabaseManager analyticsDatabaseManager;
     private IpAnalyticsRepository ipAnalyticsRepository;
 
     @Inject
@@ -49,20 +49,20 @@ public class WebAuthPlugin {
 
     @Subscribe
     public void onInitialize(ProxyInitializeEvent event) {
-
         try {
             if (!Files.exists(dataDirectory)) {
                 Files.createDirectories(dataDirectory);
             }
 
-            config = new PluginConfig();
-            String dbPath = dataDirectory.resolve("database.db").toString();
+            config = new PluginConfig(dataDirectory.resolve("config.yml"));
+            config.load(logger);
 
-            databaseManager = new DatabaseManager(dbPath);
+            String dbPath = dataDirectory.resolve("database.db").toString();
+            DatabaseManager databaseManager = new DatabaseManager(dbPath);
             Connection connection = databaseManager.getConnection();
 
             String analyticsDbPath = dataDirectory.resolve("analytics.db").toString();
-            analyticsDatabaseManager = new AnalyticsDatabaseManager(analyticsDbPath, logger);
+            AnalyticsDatabaseManager analyticsDatabaseManager = new AnalyticsDatabaseManager(analyticsDbPath, logger);
             Connection analyticsConnection = analyticsDatabaseManager.getConnection();
 
             PlayerRepository playerRepository = new PlayerRepository(connection);
@@ -83,8 +83,8 @@ public class WebAuthPlugin {
                     webhookService
             );
 
-            startHttpServer(playerRepository, pendingRepository);
-
+            startHttpServer();
+            registerCommands();
             scheduleCleanupTasks();
 
             logger.info("✅ WebAuth плагин успешно инициализирован!");
@@ -97,15 +97,47 @@ public class WebAuthPlugin {
         }
     }
 
-    private void startHttpServer(PlayerRepository playerRepository,
-                                 PendingRegistrationRepository pendingRepository) {
+    private void registerCommands() {
+        server.getCommandManager().register(
+                server.getCommandManager().metaBuilder("webauthreload").plugin(this).build(),
+                (SimpleCommand) invocation -> {
+                    CommandSource source = invocation.source();
+                    if (!(source.hasPermission("webauth.reload") || source instanceof com.velocitypowered.api.proxy.ConsoleCommandSource)) {
+                        source.sendMessage(Component.text("§cНедостаточно прав."));
+                        return;
+                    }
+
+                    boolean reloaded = reloadConfigAndApply();
+                    if (reloaded) {
+                        source.sendMessage(Component.text("§aWebAuth конфигурация успешно перезагружена."));
+                    } else {
+                        source.sendMessage(Component.text("§cОшибка перезагрузки конфигурации. Проверьте консоль."));
+                    }
+                }
+        );
+    }
+
+    private synchronized boolean reloadConfigAndApply() {
         try {
+            stopHttpServer();
+            config.load(logger);
+            webhookService.reloadFromConfig();
+            startHttpServer();
+            logger.info("✅ Конфигурация WebAuth перезагружена. Новый API порт: {}", config.getApiPort());
+            return true;
+        } catch (Exception e) {
+            logger.error("❌ Ошибка при перезагрузке конфигурации WebAuth", e);
+            return false;
+        }
+    }
+
+    private void startHttpServer() {
+        try {
+            apiHandler = new ApiRequestHandler(registrationService, config, logger);
             httpServer = Javalin.create(javalinConfig -> {
                 javalinConfig.showJavalinBanner = false;
                 javalinConfig.http.defaultContentType = "application/json";
             }).start(config.getApiPort());
-
-            var apiHandler = new ApiRequestHandler(registrationService, config, logger);
 
             httpServer.post("/internal/players/account/verify", apiHandler);
             httpServer.post("/internal/connection-requests/approve", apiHandler);
@@ -116,6 +148,19 @@ public class WebAuthPlugin {
         } catch (Exception e) {
             logger.error("❌ Ошибка при запуске HTTP сервера", e);
             throw new RuntimeException("Failed to start HTTP server", e);
+        }
+    }
+
+    private void stopHttpServer() {
+        if (httpServer == null) {
+            return;
+        }
+
+        try {
+            httpServer.stop();
+            logger.info("ℹ️ HTTP сервер остановлен");
+        } catch (Exception e) {
+            logger.warn("⚠️ Не удалось корректно остановить HTTP сервер", e);
         }
     }
 
@@ -142,7 +187,6 @@ public class WebAuthPlugin {
             boolean ipCheckResult = registrationService.checkAndNotifyNewIp(playerName, playerIp);
             if (!ipCheckResult) {
                 player.disconnect(createNewIpMessage(playerName, playerIp));
-                return;
             }
 
         } catch (Exception e) {
@@ -158,7 +202,6 @@ public class WebAuthPlugin {
         long timePassed = System.currentTimeMillis() - registrationTime;
         long timePassedSeconds = timePassed / 1000;
 
-        // Проверяем не истекло ли время
         if (timePassed > config.getRegistrationTimeoutSeconds() * 1000L) {
             registrationService.removeExpiredRegistration(playerName);
             player.disconnect(createExpiredMessage(timePassedSeconds));

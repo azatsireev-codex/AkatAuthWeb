@@ -13,28 +13,29 @@ import java.util.concurrent.CompletableFuture;
 public class WebhookService {
     private final PluginConfig config;
     private final Logger logger;
-    private final HttpClient httpClient;
+    private HttpClient httpClient;
 
     public WebhookService(PluginConfig config, Logger logger) {
         this.config = config;
         this.logger = logger;
+        rebuildClient();
+    }
+
+    public synchronized void reloadFromConfig() {
+        rebuildClient();
+    }
+
+    private synchronized void rebuildClient() {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(config.getWebsiteTimeoutSeconds()))
                 .version(HttpClient.Version.HTTP_2)
                 .build();
     }
 
-    /**
-     * Плагин отправляет запрос на сайт для подтверждения успешной регистрации
-     * @param nickname ник игрока
-     * @return true если сайт ответил 200 OK, false если 404 или ошибка
-     */
     public CompletableFuture<Boolean> sendApprovalToWebsite(String nickname) {
         try {
-            // Формируем JSON для сайта
             String json = String.format("{\"nickname\":\"%s\"}", nickname);
 
-            // Создаём запрос к сайту
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(config.getWebsiteApprovalUrl()))
                     .header("Content-Type", "application/json")
@@ -42,7 +43,6 @@ public class WebhookService {
                     .POST(HttpRequest.BodyPublishers.ofString(json))
                     .build();
 
-            // Отправляем запрос асинхронно
             return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                     .thenApply(response -> {
                         int statusCode = response.statusCode();
@@ -69,14 +69,10 @@ public class WebhookService {
         }
     }
 
-    /**
-     * Асинхронное уведомление сайта о новом IP
-     * Не блокирует поток игрока
-     */
     public CompletableFuture<Boolean> notifyNewIpToWebsiteAsync(String nickname, String ipAddress) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String url = config.getWebsiteUrl() + "/internal/players/verify";
+                String url = config.getWebsiteNewIpUrl();
 
                 String json = String.format(
                         "{\"nickname\":\"%s\",\"ipAddress\":\"%s\"}",
@@ -90,7 +86,6 @@ public class WebhookService {
                         .POST(HttpRequest.BodyPublishers.ofString(json))
                         .build();
 
-                // Асинхронная отправка
                 return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                         .thenApply(response -> {
                             int statusCode = response.statusCode();
