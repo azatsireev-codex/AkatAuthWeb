@@ -64,7 +64,16 @@ class AuthRepository:
     ):
         with self._conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO players (nickname, email, original_ip, last_ip, ip_time_zone, client_time_zone) VALUES (?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO players (nickname, email, original_ip, last_ip, ip_time_zone, client_time_zone)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(nickname) DO UPDATE SET
+                    email = excluded.email,
+                    original_ip = excluded.original_ip,
+                    last_ip = excluded.last_ip,
+                    ip_time_zone = COALESCE(excluded.ip_time_zone, players.ip_time_zone),
+                    client_time_zone = COALESCE(excluded.client_time_zone, players.client_time_zone)
+                """,
                 (nickname, email, original_ip, last_ip, ip_time_zone, client_time_zone),
             )
 
@@ -83,7 +92,16 @@ class AuthRepository:
     ):
         with self._conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO pending_registrations (nickname, email, ip_address, created_at_ms, ip_time_zone, client_time_zone) VALUES (?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO pending_registrations (nickname, email, ip_address, created_at_ms, ip_time_zone, client_time_zone)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(nickname) DO UPDATE SET
+                    email = excluded.email,
+                    ip_address = excluded.ip_address,
+                    created_at_ms = excluded.created_at_ms,
+                    ip_time_zone = COALESCE(excluded.ip_time_zone, pending_registrations.ip_time_zone),
+                    client_time_zone = COALESCE(excluded.client_time_zone, pending_registrations.client_time_zone)
+                """,
                 (nickname, email, ip_address, int(time() * 1000), ip_time_zone, client_time_zone),
             )
 

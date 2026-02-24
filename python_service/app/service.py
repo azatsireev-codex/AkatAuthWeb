@@ -36,6 +36,10 @@ class AuthFacade:
         err = self._validate(nickname, email, ip_address)
         if err:
             return {"success": False, "status": 409, **err}
+
+        ip_time_zone = ip_time_zone.strip() if isinstance(ip_time_zone, str) and ip_time_zone.strip() else None
+        client_time_zone = client_time_zone.strip() if isinstance(client_time_zone, str) and client_time_zone.strip() else None
+
         self.repository.save_pending(nickname, email, ip_address, ip_time_zone, client_time_zone)
         return {
             "success": True,

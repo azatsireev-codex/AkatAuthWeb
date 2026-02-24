@@ -95,6 +95,8 @@ curl -i -X POST "$PLUGIN_URL/internal/players/ip/check" \
 
 ### 2) Старт регистрации
 
+Поля `ipTimeZone` и `clientTimeZone` **необязательные** — если их нет или они пустые, сервис их не перезаписывает в БД.
+
 ```bash
 curl -i -X POST "$PLUGIN_URL/internal/players/account/verify" \
   -H "Authorization: Bearer $API_KEY" \
